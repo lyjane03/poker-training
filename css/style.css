@@ -270,13 +270,13 @@ select:focus, input:focus { outline: 2px solid rgba(14,122,70,.25); border-color
   border-radius: 3px; padding: 0 2px;
 }
 
-.lib-quiz-return {
+.lib-return-context {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   margin: 0 0 16px; padding: 10px 12px;
   background: var(--green-light); border: 1px solid #b8dfc9; border-radius: 10px;
   font-size: 13px; color: var(--green-dark); font-weight: 600;
 }
-.lib-quiz-return .btn { padding: 7px 12px; white-space: nowrap; }
+.lib-return-context .btn { padding: 7px 12px; white-space: nowrap; }
 
 .library-layout {
   display: grid; grid-template-columns: 230px 1fr; gap: 20px;
@@ -367,7 +367,7 @@ select:focus, input:focus { outline: 2px solid rgba(14,122,70,.25); border-color
   .lib-toc { position: static; flex-direction: row; flex-wrap: wrap; }
   .toc-item { flex: 1 1 45%; }
   .kv-row { grid-template-columns: 1fr; gap: 2px; }
-  .lib-quiz-return { align-items: flex-start; flex-direction: column; }
+  .lib-return-context { align-items: flex-start; flex-direction: column; }
 }
 
 @media (max-width: 640px) {

@@ -313,7 +313,7 @@
       </div>`;
     $('#draws-lib').addEventListener('click', () => {
       clearInterval(session.timer);
-      window.Library.open('gto');
+      window.Library.open('gto', { returnView: 'draws', returnLabel: '听牌特训' });
     });
     $('#draws-next').addEventListener('click', () => {
       if (lastOne) finishSession(); else { session.idx++; renderQuestion(); }

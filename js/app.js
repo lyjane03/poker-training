@@ -5,8 +5,8 @@
   'use strict';
 
   function switchView(name) {
-    // 题库跳转到知识库的返回入口只在本次知识库浏览期间有效。
-    if (name !== 'library' && window.Library) window.Library.clearQuizReturn();
+    // 模块跳转到知识库的返回入口只在本次知识库浏览期间有效。
+    if (name !== 'library' && window.Library) window.Library.clearReturnContext();
     document.querySelectorAll('.tab').forEach(t =>
       t.classList.toggle('active', t.dataset.view === name));
     document.querySelectorAll('.view').forEach(v =>

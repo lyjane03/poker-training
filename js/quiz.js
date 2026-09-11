@@ -238,7 +238,7 @@
         </div>
       </div>`;
     document.querySelector('#quiz-feedback .lib-link').addEventListener('click', e => {
-      window.Library.open(e.currentTarget.dataset.lib, { returnToQuiz: true });
+      window.Library.open(e.currentTarget.dataset.lib, { returnView: 'quiz', returnLabel: '题库训练' });
     });
     $('#quiz-next').addEventListener('click', () => {
       if (lastOne) finishSession(); else { session.idx++; renderQuestion(); }
@@ -294,7 +294,7 @@
         </div>
       </div>`;
     document.querySelectorAll('#quiz-session .lib-link').forEach(btn =>
-      btn.addEventListener('click', () => window.Library.open(btn.dataset.lib, { returnToQuiz: true })));
+      btn.addEventListener('click', () => window.Library.open(btn.dataset.lib, { returnView: 'quiz', returnLabel: '题库训练' })));
     if (wrongOnes.length) {
       $('#quiz-retry-wrong').addEventListener('click', () => {
         session.questions = wrongOnes.map(r => session.questions.find(x => x.id === r.qid));

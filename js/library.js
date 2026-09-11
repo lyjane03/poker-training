@@ -14,8 +14,8 @@
   let searchQuery = '';
   /** 打开章节后需要高亮并滚动的关键词 */
   let pendingHighlight = '';
-  /** 仅由题库跳转时保留，用于回到未结束的训练会话 */
-  let quizReturnAvailable = false;
+  /** 由其他模块跳转时保留，用于回到原来的页面与未结束会话 */
+  let returnContext = null;
 
   /* ---------------- 搜索索引 ---------------- */
 
@@ -60,10 +60,10 @@
       <div class="panel">
         <h2>策略知识库</h2>
         <p class="sub">德扑策略理论手册 · 与题库训练、自由练习的知识点一一对应。建议按章顺序通读，遇到不熟的术语先查附录。</p>
-        ${quizReturnAvailable ? `
-          <div class="lib-quiz-return">
-            <span>已从题库跳转至此</span>
-            <button class="btn primary" id="lib-return-quiz">← 返回题库继续训练</button>
+        ${returnContext ? `
+          <div class="lib-return-context">
+            <span>已从「${esc(returnContext.label)}」跳转至此</span>
+            <button class="btn primary" id="lib-return-source">← 返回${esc(returnContext.label)}继续训练</button>
           </div>` : ''}
         <div class="lib-search">
           <input type="search" id="lib-search-input" class="lib-search-input"
@@ -99,11 +99,12 @@
       });
     }
 
-    const returnQuizBtn = $('#lib-return-quiz');
-    if (returnQuizBtn) {
-      returnQuizBtn.addEventListener('click', () => {
-        quizReturnAvailable = false;
-        window.App.switchView('quiz');
+    const returnSourceBtn = $('#lib-return-source');
+    if (returnSourceBtn) {
+      returnSourceBtn.addEventListener('click', () => {
+        const sourceView = returnContext.view;
+        returnContext = null;
+        window.App.switchView(sourceView);
       });
     }
 
@@ -270,12 +271,14 @@
     /** 外部跳转：切到知识库视图并打开指定章节 */
     open(chapterId, options) {
       if (CHAPTERS.some(c => c.id === chapterId)) currentChapter = chapterId;
-      quizReturnAvailable = Boolean(options && options.returnToQuiz);
+      returnContext = options && options.returnView && options.returnLabel
+        ? { view: options.returnView, label: options.returnLabel }
+        : null;
       window.App.switchView('library');
     },
-    /** 离开知识库后清除一次性的题库返回入口 */
-    clearQuizReturn() {
-      quizReturnAvailable = false;
+    /** 离开知识库后清除一次性的来源返回入口 */
+    clearReturnContext() {
+      returnContext = null;
     }
   };
 })();

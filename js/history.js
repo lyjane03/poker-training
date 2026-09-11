@@ -273,7 +273,7 @@
     document.querySelectorAll('#h-list .lib-link').forEach(btn =>
       btn.addEventListener('click', ev => {
         ev.stopPropagation();
-        window.Library.open(btn.dataset.lib);
+        window.Library.open(btn.dataset.lib, { returnView: 'history', returnLabel: '历史复盘' });
       }));
   }
 

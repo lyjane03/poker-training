@@ -381,7 +381,7 @@
       </div>`;
     $('#drill-lib').addEventListener('click', () => {
       clearInterval(session.timer);
-      window.Library.open(d.lib);
+      window.Library.open(d.lib, { returnView: 'drill', returnLabel: '场景特训' });
     });
     $('#drill-next').addEventListener('click', () => {
       if (lastOne) finishSession(); else { session.idx++; renderDrill(); }

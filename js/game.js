@@ -118,18 +118,18 @@
     }
 
     // —— 盲注 ——
-    const sbIdx = nextActiveSeat(state.dealerIdx, true); // 庄家下家（含庄家自己如果只剩2人？6-max不会）
-    const bbIdx = nextActiveSeat(sbIdx, true);
+    const sbIdx = nextActiveSeat(state.dealerIdx, false); // 庄家下家出小盲
+    const bbIdx = nextActiveSeat(sbIdx, false);
     state.sbIdx = sbIdx;
     state.bbIdx = bbIdx;
     postBet(sbIdx, SB_AMOUNT, '小盲');
     postBet(bbIdx, BB_AMOUNT, '大盲');
 
     // 翻牌前 UTG 先行动（大盲下家）
-    state.toAct = nextActiveSeat(bbIdx, true);
-    state.optionUsed = false;
-    state.lastRaiser = -1;   // 本街最后加注者座位号，用于行动轮闭合判定
-    state.lastBetSize = BB_AMOUNT; // 本街当前注额级别
+    state.toAct = null; // 稍后由 needAct 推出
+    // 行动轮状态：needAct = 本街尚需表态的可行动座位
+    state.needAct = new Set(state.seats.filter(s => !s.folded && !s.allIn && s.stack > 0).map(s => s.idx));
+    state.toAct = nextInNeedAct(bbIdx);
 
     const heroPos = positionName(0);
     log(`—— 第 ${state.handsPlayed} 手 —— 你在 ${heroPos}，手牌 ${state.seats[0].hole.join(' ')}（${PC.handNotation(state.seats[0].hole)}）`, true);
@@ -150,23 +150,17 @@
     return -1;
   }
 
-  function nextActiveSeatIncludingAllIn(fromIdx, includeFrom) {
-    let i = fromIdx;
-    if (!includeFrom) i = (i + 1) % SEAT_COUNT;
-    for (let k = 0; k < SEAT_COUNT; k++) {
-      const idx = (i + k) % SEAT_COUNT;
-      const s = state.seats[idx];
-      if (!s.folded) return idx;
+  // needAct 集合中，fromIdx 顺时针之后第一个待行动座位
+  function nextInNeedAct(fromIdx) {
+    for (let k = 1; k <= SEAT_COUNT; k++) {
+      const idx = (fromIdx + k) % SEAT_COUNT;
+      if (state.needAct && state.needAct.has(idx)) return idx;
     }
     return -1;
   }
 
   function activePlayers() {
     return state.seats.filter(s => !s.folded);
-  }
-
-  function actionablePlayers() {
-    return state.seats.filter(s => !s.folded && !s.allIn && s.stack > 0);
   }
 
   // 位置名称（相对按钮）
@@ -230,50 +224,29 @@
       log(`${name}（${pos}）跟注 ${fmt(pay)}BB${s.allIn ? '（全下）' : ''}`);
     } else if (type === 'raise') {
       // amount = 本街追加投入总额（含跟注部分）
-      const pay = postBet(idx, amount);
-      state.lastRaiser = idx;
-      state.lastBetSize = s.bet;
+      postBet(idx, amount);
       s.lastAction = `${state.street === 'preflop' ? '加注到' : '下注'} ${fmt(s.bet)}`;
       log(`${name}（${pos}）${state.street === 'preflop' ? '加注到' : '下注'} ${fmt(s.bet)}BB${s.allIn ? '（全下）' : ''}`);
     }
 
-    if (s.isHero) recordHeroAction(type, amount);
+    if (s.isHero) recordHeroAction(type, amount, toCall);
 
-    // —— 行动轮闭合判定 ——
-    if (activePlayers().length === 1) { settle(); return; }
-    if (actionablePlayers().length <= 1) { advanceStreet(); return; } // 只剩 0~1 个可行动者，直接发牌/结算
-
-    let advance = false;
-    if (type === 'fold') {
-      // 若全场只剩 1 个未弃牌者，settle 已处理；否则继续
-      advance = false;
-    } else if (type === 'call') {
-      // 多人池里跟注不一定闭合行动轮：只有「跟平最后加注」且行动权回到最后加注者时才闭合
-      advance = (state.lastRaiser === -1 || idx === state.lastRaiser);
-      if (!advance) {
-        // 检查是否除最后加注者外其他人都已行动
-        const next = nextActiveSeat(idx, false);
-        if (next === state.lastRaiser) advance = true;
-      }
-    } else if (type === 'check') {
-      // 翻牌前大盲 option
-      if (state.street === 'preflop' && !state.optionUsed && idx === state.bbIdx && currentMaxBet() === BB_AMOUNT) {
-        state.optionUsed = true;
-        advance = true;
-      } else if (state.street !== 'preflop' && state.lastRaiser === -1) {
-        // 翻牌后无人下注，连续过牌一圈即闭合
-        const prevRaiser = state.lastRaiser;
-        state.lastRaiser = idx; // 借用 lastRaiser 记录本轮起始者
-        if (prevRaiser !== -1) advance = true;
-      } else if (state.street !== 'preflop' && state.lastRaiser === idx) {
-        advance = true;
-      }
+    // —— 行动轮闭合判定（needAct 集合方案）——
+    // 任何人行动完毕即从 needAct 移除；加注/下注（含全下加注）则重新要求其他所有可行动者表态。
+    state.needAct.delete(idx);
+    if (type === 'raise') {
+      state.seats.forEach(x => {
+        if (x.idx !== idx && !x.folded && !x.allIn && x.stack > 0) state.needAct.add(x.idx);
+      });
     }
-    // raise：advance 保持 false，行动权交给下家
 
-    state.toAct = nextActiveSeat(idx, false);
+    if (activePlayers().length === 1) { settle(); return; }
+    if (state.needAct.size === 0) { advanceStreet(); return; }
 
-    if (advance) { advanceStreet(); return; }
+    const next = nextInNeedAct(idx);
+    if (next === -1) { advanceStreet(); return; }
+    state.toAct = next;
+
     render();
     maybeAiAct();
   }
@@ -281,8 +254,6 @@
   function advanceStreet() {
     // 重置本街状态
     state.seats.forEach(s => { s.bet = 0; s.lastAction = ''; });
-    state.lastRaiser = -1;
-    state.optionUsed = true; // 翻牌后无 option 概念
 
     const i = STREETS.indexOf(state.street);
     if (i >= 3) { settle(); return; }
@@ -297,11 +268,10 @@
     }
     log(`【${STREET_CN[state.street]}】公共牌：${state.board.join(' ')}`);
 
-    // 翻牌后从庄家下家（小盲位）开始第一个未弃牌者行动
-    state.toAct = nextActiveSeat(state.dealerIdx, false);
-
-    // 若无可行动者（所有人都全下），直接连续发牌到河牌
-    if (actionablePlayers().length === 0) { advanceStreet(); return; }
+    // 翻牌后从庄家下家开始，按位置顺序第一个待行动者
+    state.needAct = new Set(state.seats.filter(s => !s.folded && !s.allIn && s.stack > 0).map(s => s.idx));
+    state.toAct = nextInNeedAct(state.dealerIdx);
+    if (state.toAct === -1) { advanceStreet(); return; } // 无人可行动（全下），连发到结算
 
     render();
     maybeAiAct();
@@ -491,13 +461,13 @@
   }
 
   /* ================= 玩家决策点评 ================= */
-  function recordHeroAction(type, amount) {
+  function recordHeroAction(type, amount, toCall) {
     state.heroActions = state.heroActions || [];
     state.heroActions.push({
       street: state.street,
       board: state.board.slice(),
       type, amount,
-      toCall: toCallOf(0),
+      toCall,
       pot: state.seats.reduce((sum, s) => sum + s.invested, 0)
     });
   }
@@ -533,26 +503,64 @@
     // —— 翻牌后 ——
     const made = PC.evaluate7(hero.hole.concat(a.board));
     const cat = made.category;
-    const strongMade = cat >= 2, onePair = cat === 1, air = cat === 0;
+    const strongMade = cat >= 2, onePair = cat === 1;
+
+    // 相对牌力与尺度上下文
+    const boardVals = a.board.map(c => PC.cardValue(c)).sort((x, y) => y - x);
+    const topBoard = boardVals[0];
+    const secondBoard = boardVals[1] || 0;
+    const pairRank = onePair ? made.tiebreak[0] : 0; // 一对的点数
+    const underpair = onePair && hero.hole[0][0] === hero.hole[1][0] && pairRank < topBoard; // 口袋对未中三条（暗低对）
+    const weakPair = onePair && pairRank < secondBoard;      // 对子点数低于公共牌第二大点
+    const topPairPlus = onePair && pairRank >= topBoard;     // 顶对及以上
+
+    const outsInfo = a.board.length >= 3 ? PC.countOuts(hero.hole, a.board) : null;
+    const outs = outsInfo ? outsInfo.outs : 0;
+    const hasDraw = outs >= 8;                               // 强听牌（花顺双抽/OESD/听花）
+    const weakDraw = outs >= 4 && outs < 8;                  // 卡顺等弱听
+
+    // 面对的下注尺度（a.toCall 为跟注额，a.pot 为动作时底池）
+    const betSize = a.toCall > 0 && a.pot > 0 ? a.toCall / a.pot : 0;
+    const bigBet = betSize > 0.35, smallBet = betSize <= 0.18;
+    const boardTxt = a.board.map(c => c[0]).join('-');
 
     if (a.type === 'fold') {
       if (strongMade) return { grade: 'bad', title: '弃掉强成牌', body: `${made.categoryName} 在该牌面很强，面对下注弃牌放弃了大量权益。`, theory: { name: 'MDF（最小防守频率）：强牌面对任何尺度都应继续', cat: 'gto' } };
-      if (onePair) return { grade: 'mixed', title: '弃掉对子', body: '一对面对大尺度可以弃牌；但对中小尺度弃牌频率过高，会被持续下注系统性剥削。', theory: { name: 'MDF：不能让对手用任意两张牌获利', cat: 'gto' } };
+      if (onePair && !underpair && !weakPair) return { grade: 'mixed', title: '弃掉中对以上牌力', body: `${made.categoryName}（${pairRank === topBoard ? '顶对' : '中对'}）面对${bigBet ? '大' : '中小'}尺度可以适度弃牌，但频率过高会被持续下注系统性剥削。`, theory: { name: 'MDF：不能让对手用任意两张牌获利', cat: 'gto' } };
+      if (underpair || weakPair) return { grade: 'good', title: '弃掉低对', body: `一对 ${pairRank} 在 ${boardTxt} 牌面明显落后：${underpair ? '口袋对未中三条只剩 2 张补牌' : '被公共牌压制'}，面对${bigBet ? '大注' : '下注'}弃牌止损正确。`, theory: { name: '相对牌力：一对的价值取决于是否顶对', cat: 'gto' } };
+      if (hasDraw) return { grade: 'mixed', title: '弃掉强听牌', body: `${outsInfo.parts.join('，')}共 ${outs} 张补牌，面对中小尺度通常应继续；面对超池大注弃掉听牌也情有可原。`, theory: { name: '底池赔率与补牌：跟注所需胜率对照表', cat: 'gto' } };
       return { grade: 'good', title: '放弃空气牌', body: '无成牌无听牌，弃牌节省筹码。', theory: { name: '权益实现：无权益不投入', cat: 'gto' } };
     }
     if (a.type === 'call') {
       if (strongMade) return { grade: 'good', title: '强牌跟注', body: `${made.categoryName} 跟注合理；若对手是跟注站风格，也可考虑加注榨取更大价值。`, theory: { name: '价值最大化：对跟注站用强牌加大尺度', cat: 'exploit' } };
-      if (onePair) return { grade: 'good', title: '对子防守跟注', body: '在合理尺度下用对子防守，符合最小防守频率要求。', theory: { name: 'MDF 与底池赔率', cat: 'gto' } };
-      return { grade: 'mixed', title: '无牌跟注', body: '无对无听跟注需要明确的隐含赔率或后续诈唬计划支撑，否则长期亏损。', theory: { name: '底池赔率：跟注所需胜率 = 跟注额 ÷（底池 + 跟注额）', cat: 'gto' } };
+      if (topPairPlus) return { grade: 'good', title: '顶对跟注', body: '顶对及以上面对常规尺度跟注防守，标准玩法。', theory: { name: 'MDF 与底池赔率', cat: 'gto' } };
+      if (underpair) {
+        if (bigBet) return { grade: 'bad', title: '暗低对跟大注', body: `口袋对 ${pairRank} 未中三条，在 ${boardTxt} 牌面只剩 2 张补牌，面对约 ${Math.round(betSize * 100)}% 底池的下注长期必亏——这正是「小对子投机失败」的典型场景，应及时止损。`, theory: { name: 'Set Mining 失败后的处置：及时放弃', cat: 'starting' } };
+        return { grade: 'mixed', title: '暗低对小注防守', body: `口袋对 ${pairRank} 未中三条，只剩 2 张补牌；小尺度下勉强可跟一张，但计划是后续不再投入。`, theory: { name: '底池控制与相对牌力', cat: 'gto' } };
+      }
+      if (weakPair) {
+        if (bigBet) return { grade: 'bad', title: '低对跟大注', body: `一对 ${pairRank} 低于牌面第二张大牌（${boardTxt}），落后大量顶对/超对；面对约 ${Math.round(betSize * 100)}% 底池的下注，跟注是负期望的「英雄跟」。`, theory: { name: '相对牌力：第二张公共牌定生死', cat: 'gto' } };
+        return { grade: 'mixed', title: '低对小注跟注', body: `一对 ${pairRank} 牌力中等偏弱，小尺度跟注可以，但面对下一街大注要做好弃牌准备。`, theory: { name: '底池控制', cat: 'position' } };
+      }
+      if (hasDraw) {
+        if (bigBet && outs < 12) return { grade: 'mixed', title: '强听牌面对大注', body: `${outs} 张补牌面对大注处于赔率边缘，深码时勉强可跟，筹码浅或多人池时弃牌更好。`, theory: { name: '底池赔率：跟注所需胜率对照', cat: 'gto' } };
+        return { grade: 'good', title: '听牌跟注', body: `${outsInfo.parts.join('，')}共 ${outs} 张补牌，${smallBet ? '价格合适' : '价格尚可'}，跟注继续合理。`, theory: { name: '四二法则：补牌 × 街数 ÷ 100', cat: 'gto' } };
+      }
+      if (weakDraw) return { grade: 'mixed', title: '弱听跟注', body: `仅 ${outs} 张补牌（卡顺等），需要更好的隐含赔率支撑；偶尔跟一次可以，连跟多街是漏。`, theory: { name: '隐含赔率：弱听牌需要深筹码支撑', cat: 'gto' } };
+      return { grade: 'bad', title: '空气牌跟注（跟注站行为）', body: '无成牌无有效听牌，面对下注纯寄望于对手诈唬——这正是复盘数据里最常见的「跟注站」漏洞。', theory: { name: '底池赔率：无权益不跟注', cat: 'gto' } };
     }
     if (a.type === 'raise') {
       if (strongMade) return { grade: 'good', title: '强牌主动下注/加注', body: `${made.categoryName} 主动施压正确：拿价值 + 保护权益 + 让听牌付出错误价格。`, theory: { name: '价值下注：用强牌建立底池', cat: 'sizing' } };
-      if (onePair) return { grade: 'mixed', title: '中等牌力下注', body: '下注前先自问：有更差的牌会跟吗？打不走更好的牌时，下注只是烧钱——过牌控制底池往往更好。', theory: { name: '底池控制（Pot Control）：中等牌力保持小底池', cat: 'position' } };
+      if (onePair && !underpair && !weakPair) return { grade: 'mixed', title: '中等牌力下注', body: '下注前先自问：有更差的牌会跟吗？打不走更好的牌时，下注只是烧钱——过牌控制底池往往更好。', theory: { name: '底池控制（Pot Control）：中等牌力保持小底池', cat: 'position' } };
+      if (underpair || weakPair) return { grade: 'mixed', title: '低对下注', body: `一对 ${pairRank} 在该牌面很难被更差牌跟注，下注价值薄；过牌控池面对下注再决定更省。`, theory: { name: '底池控制', cat: 'position' } };
+      if (hasDraw) return { grade: 'good', title: '听牌半诈唬', body: `${outs} 张补牌的半诈唬有直接赢率 + 弃牌权益，翻牌圈是好时机，转牌后慎用。`, theory: { name: '半诈唬：权益 = 弃牌率 + 补牌率', cat: 'gto' } };
       return { grade: 'mixed', title: '诈唬下注', body: '纯诈唬需评估：对手弃牌率是否高于盈亏平衡线？自己有没有阻断牌？偶发可行，切勿养成习惯。', theory: { name: '诈唬盈亏平衡：半池注需对手 33% 弃牌率', cat: 'sizing' } };
     }
     if (a.type === 'check') {
       if (strongMade) return { grade: 'mixed', title: '强牌过牌', body: `${made.categoryName} 过牌可作为诱捕（对激进对手有效），但对被动对手会损失一条街的价值。`, theory: { name: '剥削打法：诱捕仅对会主动下注的对手有效', cat: 'exploit' } };
-      if (onePair) return { grade: 'good', title: '中等牌过牌控池', body: '中等牌力过牌控制底池、保留摊牌价值，是稳健选择。', theory: { name: '底池控制', cat: 'position' } };
+      if (topPairPlus) return { grade: 'mixed', title: '顶对过牌', body: '顶对在干燥面过牌控池可以理解，但主动下注拿价值通常更高 EV。', theory: { name: '价值下注', cat: 'sizing' } };
+      if (onePair) return { grade: 'good', title: '中小对过牌控池', body: '中等偏弱牌力过牌控制底池、保留摊牌价值，是稳健选择。', theory: { name: '底池控制', cat: 'position' } };
+      if (hasDraw) return { grade: 'good', title: '听牌过牌', body: `${outs} 张补牌，无主动下注时过牌看免费牌合理。`, theory: { name: '免费牌原则', cat: 'gto' } };
       return { grade: 'good', title: '弱牌过牌', body: '无成牌时过牌看免费牌，合理。', theory: { name: '免费牌原则', cat: 'gto' } };
     }
     return { grade: 'mixed', title: '行动记录', body: '', theory: null };
@@ -828,17 +836,17 @@
       </div>`;
 
     document.querySelectorAll('#game-table .lib-link').forEach(btn =>
-      btn.addEventListener('click', () => window.Library.open(btn.dataset.lib)));
+      btn.addEventListener('click', () => window.Library.open(btn.dataset.lib, { returnView: 'game', returnLabel: '自由练习' })));
     $('#hand-log-toggle').addEventListener('click', () => $('#hand-log').classList.toggle('hidden'));
     $('#hand-next').addEventListener('click', () => { lastHand ? finishMatch() : startHand(); });
   }
 
   function actLabel(a) {
-    return {
-      fold: '弃牌', check: '过牌',
-      call: `跟注 ${fmt(a.toCall)}BB`,
-      raise: `下注/加注（追加 ${fmt(a.amount)}BB）`
-    }[a.type] || a.type;
+    if (a.type === 'fold') return '弃牌';
+    if (a.type === 'check') return '过牌';
+    if (a.type === 'call') return `跟注 ${fmt(a.toCall || 0)}BB`;
+    if (a.type === 'raise') return `下注/加注（追加 ${fmt(a.amount)}BB）`;
+    return a.type;
   }
 
   window.Game = { renderHome };
